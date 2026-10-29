@@ -226,6 +226,129 @@ func TestEnsure_RejectsUnownedCredentialsSecret(t *testing.T) {
 	g.Expect(pg.passwordSets).To(Equal(0), "the foreign Secret's password must never be reused")
 }
 
+// stampedCredentialsSecret returns the claim's credentials Secret with a
+// valid credential stamp for password, built through the same writer the
+// provisioner uses.
+const testClaimUID = "claim-uid"
+
+func stampedCredentialsSecret(t *testing.T, claim *infraApi.DatabaseClaim, password string) *corev1.Secret {
+	t.Helper()
+	role := dbcontroller.RoleNameFor(claim.Namespace, claim.Name)
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: claim.Name, Namespace: claim.Namespace}}
+	dbcontroller.ApplyClaimCredentials(secret, providerConfig(), role, password, "analytics", claim.UID)
+	return secret
+}
+
+func TestEnsure_PreservesStampedPassword(t *testing.T) {
+	g := NewWithT(t)
+	claim := sampleClaim("analytics")
+	claim.UID = testClaimUID
+	role := dbcontroller.RoleNameFor(claim.Namespace, claim.Name)
+	pg := &trackingClient{
+		cfg:       providerConfig(),
+		databases: map[string]bool{"analytics": true},
+		roles:     map[string]bool{role: true},
+	}
+	existing := credentialsSecretOwnedBy(t, claim.Name, claim.Namespace, claim)
+	dbcontroller.ApplyClaimCredentials(existing, providerConfig(), role, "original-pw", "analytics", claim.UID)
+	cli := fakeClient(t, existing)
+
+	secret, err := databaseclaim.DatabaseProvisioner{
+		Client:         cli,
+		Claim:          claim,
+		Provider:       internalProvider(),
+		Postgres:       pg,
+		ProviderConfig: providerConfig(),
+	}.Ensure(context.Background())
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(pg.passwordSets).To(Equal(0), "a stamp-verified password must not be rotated")
+	g.Expect(string(secret.Data[postgres.SecretKeyPassword])).To(Equal("original-pw"))
+}
+
+func TestEnsure_RotatesTamperedPassword(t *testing.T) {
+	g := NewWithT(t)
+	claim := sampleClaim("analytics")
+	claim.UID = testClaimUID
+	role := dbcontroller.RoleNameFor(claim.Namespace, claim.Name)
+	pg := &trackingClient{
+		cfg:       providerConfig(),
+		databases: map[string]bool{"analytics": true},
+		roles:     map[string]bool{role: true},
+	}
+	existing := credentialsSecretOwnedBy(t, claim.Name, claim.Namespace, claim)
+	dbcontroller.ApplyClaimCredentials(existing, providerConfig(), role, "original-pw", "analytics", claim.UID)
+	existing.Data[postgres.SecretKeyPassword] = []byte("tampered-pw")
+	cli := fakeClient(t, existing)
+
+	secret, err := databaseclaim.DatabaseProvisioner{
+		Client:         cli,
+		Claim:          claim,
+		Provider:       internalProvider(),
+		Postgres:       pg,
+		ProviderConfig: providerConfig(),
+	}.Ensure(context.Background())
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(pg.passwordSets).To(Equal(1), "a password that fails stamp verification must be rotated")
+	g.Expect(string(secret.Data[postgres.SecretKeyPassword])).NotTo(Equal("tampered-pw"))
+}
+
+func TestEnsure_MigratesUnstampedOwnedSecret(t *testing.T) {
+	g := NewWithT(t)
+	claim := sampleClaim("analytics")
+	claim.UID = testClaimUID
+	role := dbcontroller.RoleNameFor(claim.Namespace, claim.Name)
+	pg := &trackingClient{
+		cfg:       providerConfig(),
+		databases: map[string]bool{"analytics": true},
+		roles:     map[string]bool{role: true},
+	}
+	existing := credentialsSecretOwnedBy(t, claim.Name, claim.Namespace, claim)
+	existing.Data = map[string][]byte{postgres.SecretKeyPassword: []byte("legacy-pw")}
+	cli := fakeClient(t, existing)
+
+	secret, err := databaseclaim.DatabaseProvisioner{
+		Client:         cli,
+		Claim:          claim,
+		Provider:       internalProvider(),
+		Postgres:       pg,
+		ProviderConfig: providerConfig(),
+	}.Ensure(context.Background())
+
+	g.Expect(err).NotTo(HaveOccurred())
+	g.Expect(pg.passwordSets).To(Equal(0), "an owned Secret from before the stamp must keep its password")
+	g.Expect(string(secret.Data[postgres.SecretKeyPassword])).To(Equal("legacy-pw"))
+	g.Expect(secret.Annotations[dbcontroller.CredentialStampAnnotation]).NotTo(BeEmpty(),
+		"the migration path must stamp the preserved password")
+}
+
+func TestEnsure_ReAdoptsStampedSecretWithStrippedOwnerRef(t *testing.T) {
+	g := NewWithT(t)
+	claim := sampleClaim("analytics")
+	claim.UID = testClaimUID
+	role := dbcontroller.RoleNameFor(claim.Namespace, claim.Name)
+	pg := &trackingClient{
+		cfg:       providerConfig(),
+		databases: map[string]bool{"analytics": true},
+		roles:     map[string]bool{role: true},
+	}
+	existing := stampedCredentialsSecret(t, claim, "original-pw")
+	cli := fakeClient(t, existing)
+
+	secret, err := databaseclaim.DatabaseProvisioner{
+		Client:         cli,
+		Claim:          claim,
+		Provider:       internalProvider(),
+		Postgres:       pg,
+		ProviderConfig: providerConfig(),
+	}.Ensure(context.Background())
+
+	g.Expect(err).NotTo(HaveOccurred(), "a stamp-verified Secret must not be treated as foreign")
+	g.Expect(pg.passwordSets).To(Equal(0))
+	g.Expect(string(secret.Data[postgres.SecretKeyPassword])).To(Equal("original-pw"))
+}
+
 func TestEnsure_CreatesNamedDatabaseOnExternalWhenAllowed(t *testing.T) {
 	g := NewWithT(t)
 	claim := sampleClaim("analytics")

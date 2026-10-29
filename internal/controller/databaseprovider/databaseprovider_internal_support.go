@@ -249,9 +249,9 @@ func internalTLSStatus(
 	}
 }
 
-// internalTLSSecret must receive the manager's API reader: the TLS Secret is
-// issued by cert-manager and carries no operator label, so it never enters
-// the label-scoped cache (RHOAIENG-96275).
+// internalTLSSecret relies on Secret reads bypassing the informer cache via
+// the manager client's Cache.DisableFor (RHOAIENG-96275): the TLS Secret is
+// issued by cert-manager and carries no operator label.
 func internalTLSSecret(
 	ctx context.Context,
 	reader client.Reader,
@@ -343,11 +343,11 @@ func resolveInternalTLSState(
 // provider, including the desired admin Secret projection. If the admin Secret
 // already exists its password is preserved; otherwise fresh credentials are
 // generated. The caller adds TLSState.AdminSecret to rr.Resources so the deploy
-// action creates or updates it via SSA.
-//
-// reader must be the manager's API reader: a pre-existing admin Secret from
-// before the managed label existed carries no selector match, so a cached
-// read would report it missing and trip the password-preservation guard.
+// action creates or updates it via SSA. Secret reads bypass the informer cache
+// via the manager client's Cache.DisableFor, so a pre-existing admin Secret
+// from before the managed label existed is served fresh; the PVC existence
+// check reads through the cache, which is safe because the guard only matters
+// once the instance has aged past informer sync.
 func computeInternalAdminSecret(
 	ctx context.Context,
 	reader client.Reader,

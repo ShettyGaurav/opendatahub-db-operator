@@ -363,10 +363,13 @@ func deleteClaimCredentialsSecret(ctx context.Context, cli client.Client, claim 
 	}
 
 	// Name alone is not enough: SchemaClaim "foo" and DatabaseClaim "sc-foo"
-	// both default to Secret "sc-foo". Delete only when this claim is the
-	// controller owner (including when the claim never provisioned).
-	owner := metav1.GetControllerOf(secret)
-	if owner == nil || owner.UID != claim.UID {
+	// both default to Secret "sc-foo". Delete only when this claim owns the
+	// Secret, or — when the ownerRef was stripped — when the credential stamp
+	// still proves the content is this claim's. RejectForeignCredentialsSecret
+	// shares the ownership rule with provisioning, so a Secret owned by
+	// another controller is never deleted here, forged stamp or not.
+	role := dbcontroller.RoleNameForSchemaClaim(claim.Namespace, claim.Name)
+	if dbcontroller.RejectForeignCredentialsSecret(secret, claim.UID, role) != nil {
 		return nil
 	}
 

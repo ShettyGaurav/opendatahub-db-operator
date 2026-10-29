@@ -41,7 +41,7 @@ func (m *Controller) reconcileExternalAction(ctx context.Context, rr *odhtypes.R
 		return nil
 	}
 
-	cfg, err := loadExternalConfig(ctx, m.APIReader, obj)
+	cfg, err := loadExternalConfig(ctx, rr.Client, obj)
 	if err != nil {
 		reportExternalConfigFailure(rr, obj, err)
 		return nil

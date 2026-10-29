@@ -288,4 +288,35 @@ func TestClaimSecretDriftHealing(t *testing.T) {
 		g.Expect(string(secret.Data["password"])).NotTo(Equal(originalPassword),
 			"a deleted Secret is healed by rotating, since the password is unrecoverable")
 	}).Should(Succeed(), "deleted credentials Secret should be re-provisioned promptly by the watch")
+
+	rotatedPassword := string(readSecret(g).Data["password"])
+
+	// A tampered password fails stamp verification and heals by rotating.
+	tampered := readSecret(g).DeepCopy()
+	tampered.Data["password"] = []byte("tampered-value")
+	g.Expect(cli.Update(ctx, tampered)).To(Succeed())
+	g.Eventually(func(g Gomega) {
+		secret := readSecret(g)
+		password := string(secret.Data["password"])
+		g.Expect(password).NotTo(Equal("tampered-value"),
+			"an unverifiable password must never be kept")
+		g.Expect(password).NotTo(Equal(rotatedPassword),
+			"a tampered password heals by rotating")
+	}).Should(Succeed(), "tampered password should be rotated promptly by the watch")
+
+	// A stripped controller ownerRef heals by re-adoption: the credential
+	// stamp still verifies the content, so the claim preserves the password
+	// and provisionAction re-stamps the ownerRef.
+	stampedPassword := string(readSecret(g).Data["password"])
+	stripped := readSecret(g).DeepCopy()
+	stripped.OwnerReferences = nil
+	g.Expect(cli.Update(ctx, stripped)).To(Succeed())
+	g.Eventually(func(g Gomega) {
+		secret := readSecret(g)
+		owner := metav1.GetControllerOf(secret)
+		g.Expect(owner).NotTo(BeNil(), "the controller ownerRef should be re-adopted")
+		g.Expect(owner.Kind).To(Equal(infraApi.DatabaseClaimKind))
+		g.Expect(string(secret.Data["password"])).To(Equal(stampedPassword),
+			"a stamp-verified password must be preserved through re-adoption")
+	}).Should(Succeed(), "stripped ownerRef should be healed promptly by the watch")
 }

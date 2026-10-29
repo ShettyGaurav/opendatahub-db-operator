@@ -56,15 +56,15 @@ func NewController(cfg *moduleconfig.Config, opts ...Option) *Controller {
 func NewReconciler(ctx context.Context, mgr ctrl.Manager, cfg *moduleconfig.Config, opts ...Option) error {
 	m := NewController(cfg, opts...)
 
-	// Owns(Secret) reacts to credentials Secret drift: deletion heals by
-	// rotation and non-secret field edits restore on the next reconcile.
-	// A tampered password value is preserved, not healed — it cannot be
-	// validated against the role — and needs manual rotation. The manager's
-	// Secret informer is label-scoped to operator-managed Secrets
-	// (RHOAIENG-96275), so the watch sees only claim credentials. The hash
-	// predicate fires on content changes only; Secrets never bump
-	// metadata.generation, so generation-based predicates would fire on
-	// every resourceVersion bump.
+	// Owns(Secret) heals credentials Secret drift: deletion heals by
+	// rotation, non-secret field edits restore on the next reconcile, and a
+	// tampered password heals by rotation once it fails the credential
+	// stamp. The manager's Secret informer is label-scoped to
+	// operator-managed Secrets (RHOAIENG-96275), so the watch sees only
+	// claim credentials. The hash predicate fires on content changes only
+	// (Secrets never bump metadata.generation, so generation-based
+	// predicates would fire on every resourceVersion bump), and the
+	// ownerReferences predicate covers ownership changes the hash strips.
 	_, err := reconciler.ReconcilerFor(mgr, &infraApi.SchemaClaim{}).
 		Watches(
 			&infraApi.DatabaseProvider{},
@@ -72,7 +72,10 @@ func NewReconciler(ctx context.Context, mgr ctrl.Manager, cfg *moduleconfig.Conf
 			reconciler.WithEventMapper(
 				dbcontroller.BroadcastListMapper(mgr.GetClient(), &infraApi.SchemaClaimList{}),
 			)).
-		Owns(&corev1.Secret{}, reconciler.WithPredicates(hash.Updated())).
+		Owns(&corev1.Secret{}, reconciler.WithPredicates(predicate.Or(
+			hash.Updated(),
+			dbcontroller.OwnerReferencesChanged(),
+		))).
 		WithReconcilerOpts(
 			reconciler.WithRelease(m.platformRelease),
 			reconciler.WithDefaultRequeueAfter(retryInterval(cfg)),

@@ -425,15 +425,22 @@ func ListSchemaClaims(ctx context.Context, cli client.Client) ([]infraApi.Schema
 }
 
 // RejectForeignCredentialsSecret returns SecretNotOwned when secret already
-// exists and is not controller-owned by claimUID. A missing Secret is fine.
-// SchemaClaim "foo" and DatabaseClaim "sc-foo" both default to Secret "sc-foo";
-// rejecting early avoids Postgres role/password work on another claim's Secret.
-func RejectForeignCredentialsSecret(secret *corev1.Secret, claimUID types.UID) error {
+// exists and cannot be shown to belong to this claim. A missing Secret is
+// fine. Ownership is established by the controller ownerRef, or — when the
+// ownerRef was stripped after provisioning — by a matching credential stamp
+// (the provisioner then preserves the Secret and provisionAction re-stamps
+// the ownerRef). SchemaClaim "foo" and DatabaseClaim "sc-foo" both default to
+// Secret "sc-foo"; rejecting early avoids Postgres role/password work on
+// another claim's Secret.
+func RejectForeignCredentialsSecret(secret *corev1.Secret, claimUID types.UID, role string) error {
 	if secret == nil || secret.ResourceVersion == "" {
 		return nil
 	}
 	owner := metav1.GetControllerOf(secret)
 	if owner != nil && owner.UID == claimUID {
+		return nil
+	}
+	if owner == nil && CredentialStampMatches(secret, claimUID, role) {
 		return nil
 	}
 	return claimerrors.SecretNotOwned{Secret: secret.Name}
