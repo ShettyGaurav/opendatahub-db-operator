@@ -21,6 +21,8 @@ import (
 	"testing"
 
 	. "github.com/onsi/gomega"
+	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/predicates/hash"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/client-go/util/workqueue"
@@ -218,6 +220,43 @@ func TestClaimWatchEventHandler(t *testing.T) {
 		}, q)
 		g.Expect(drain(q)).To(ConsistOf(requestFor("internal-a"), requestFor("internal-b")))
 	})
+}
+
+// TestSecretDriftPredicate pins the predicate the claim controllers use for
+// Owns(&Secret): hash.Updated() must pass content changes and filter
+// resourceVersion-only bumps. Secrets never increment metadata.generation, so
+// the framework's default (generation-based) predicate would pass every
+// update; a regression to it makes this test fail.
+func TestSecretDriftPredicate(t *testing.T) {
+	g := NewWithT(t)
+	pred := hash.Updated()
+
+	secret := func(password, resourceVersion string) *corev1.Secret {
+		return &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:            "creds",
+				Namespace:       "app",
+				ResourceVersion: resourceVersion,
+			},
+			Data: map[string][]byte{"password": []byte(password)},
+		}
+	}
+
+	g.Expect(pred.Create(event.TypedCreateEvent[client.Object]{Object: secret("pw", "1")})).To(BeTrue(),
+		"secret creation must enqueue")
+
+	g.Expect(pred.Delete(event.TypedDeleteEvent[client.Object]{Object: secret("pw", "1")})).To(BeTrue(),
+		"secret deletion must enqueue")
+
+	g.Expect(pred.Update(event.TypedUpdateEvent[client.Object]{
+		ObjectOld: secret("pw", "1"),
+		ObjectNew: secret("changed", "2"),
+	})).To(BeTrue(), "a password change must enqueue")
+
+	g.Expect(pred.Update(event.TypedUpdateEvent[client.Object]{
+		ObjectOld: secret("pw", "1"),
+		ObjectNew: secret("pw", "2"),
+	})).To(BeFalse(), "a resourceVersion-only bump must not enqueue")
 }
 
 func TestEffectiveProviderName(t *testing.T) {
