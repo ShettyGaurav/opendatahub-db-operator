@@ -163,9 +163,8 @@ func (m *Controller) provisionAction(ctx context.Context, rr *odhtypes.Reconcili
 		return err
 	}
 
-	// Owns(Secret) is deferred (scoped cache); set the controller ownerRef so
-	// GC removes the Secret after the claim is deleted, and so AC checks that
-	// expect an owner reference to the claim succeed.
+	// The controller ownerRef makes GC collect the Secret after claim
+	// deletion and routes Owns(Secret) drift events to this claim.
 	if err := controllerutil.SetControllerReference(obj, secret, rr.Client.Scheme()); err != nil {
 		return fmt.Errorf("setting credentials Secret owner reference: %w", err)
 	}
@@ -216,8 +215,9 @@ func (m *Controller) cleanupAction(ctx context.Context, rr *odhtypes.Reconciliat
 	// via selector: a rebound provider could DropSchema on the wrong backend
 	// when DeletionPolicy=Delete.
 	//
-	// Owns(Secret) is deferred, so deploy may not rely on GC alone. Always
-	// delete the credentials Secret once Postgres cleanup is done or skipped.
+	// Do not rely on GC alone for the credentials Secret: deletion must
+	// finish before the finalizer is removed, so delete explicitly once
+	// Postgres cleanup is done or skipped.
 	if obj.Status.Provider == "" {
 		return deleteClaimCredentialsSecret(ctx, rr.Client, obj)
 	}
@@ -348,6 +348,10 @@ func (m *Controller) cleanupAction(ctx context.Context, rr *odhtypes.Reconciliat
 	return deleteClaimCredentialsSecret(ctx, rr.Client, obj)
 }
 
+// deleteClaimCredentialsSecret deletes the claim's Secret when this claim is
+// its controller owner. Secret reads bypass the informer cache via the
+// manager client's Cache.DisableFor (RHOAIENG-96275), so the ownership gate
+// sees the live Secret even when it carries no managed label.
 func deleteClaimCredentialsSecret(ctx context.Context, cli client.Client, claim *infraApi.SchemaClaim) error {
 	key := client.ObjectKey{
 		Name:      dbcontroller.SecretNameForSchemaClaim(claim),

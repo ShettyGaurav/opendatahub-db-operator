@@ -69,6 +69,9 @@ func NewController(cfg *moduleconfig.Config, opts ...Option) *Controller {
 
 func NewReconciler(ctx context.Context, mgr ctrl.Manager, cfg *moduleconfig.Config, opts ...Option) error {
 	m := NewController(cfg, opts...)
+	if m.APIReader == nil {
+		m.APIReader = mgr.GetAPIReader()
+	}
 
 	// Secret watches belong with RHOAIENG-96275's scoped cache; registering
 	// them here would cache Secrets from unrelated namespaces.

@@ -97,14 +97,15 @@ func SchemaNameFor(claim *infraApi.SchemaClaim) string {
 
 // NewClient loads the provider's admin connection config and opens a postgres.Client.
 // Extracted from the identical openPool helpers in schemaclaim and databaseclaim.
+// See LoadProviderConfig for the Secret read path.
 func NewClient(
 	ctx context.Context,
-	cli client.Client,
+	reader client.Reader,
 	provider *infraApi.DatabaseProvider,
 	cfg *moduleconfig.Config,
 	factory postgres.ClientFactory,
 ) (postgres.Client, postgres.Config, error) {
-	providerCfg, err := LoadProviderConfig(ctx, cli, provider, cfg.OperatorNamespace)
+	providerCfg, err := LoadProviderConfig(ctx, reader, provider, cfg.OperatorNamespace)
 	if err != nil {
 		return nil, postgres.Config{}, err
 	}

@@ -18,6 +18,7 @@ package databaseprovider
 
 import (
 	"k8s.io/client-go/tools/events"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	fwapi "github.com/opendatahub-io/odh-platform-utilities/framework/api"
 	moduleconfig "github.com/opendatahub-io/opendatahub-db-operator/pkg/config"
@@ -33,6 +34,9 @@ type Options struct {
 	platformRelease       fwapi.Release
 	Recorder              events.EventRecorder
 	PostgresClientFactory postgres.ClientFactory
+	// APIReader serves Secret reads that must bypass the label-scoped cache
+	// (RHOAIENG-96275); nil defaults to the manager's API reader.
+	APIReader client.Reader
 }
 
 func (o Options) applyOption(target *Options) {
@@ -44,6 +48,9 @@ func (o Options) applyOption(target *Options) {
 	}
 	if o.PostgresClientFactory != nil {
 		target.PostgresClientFactory = o.PostgresClientFactory
+	}
+	if o.APIReader != nil {
+		target.APIReader = o.APIReader
 	}
 }
 

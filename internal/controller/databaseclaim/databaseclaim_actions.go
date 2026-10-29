@@ -138,6 +138,7 @@ func (m *Controller) provisionAction(ctx context.Context, rr *odhtypes.Reconcili
 		rr.Conditions.Mark(ConditionProvisioned, metav1.ConditionFalse,
 			conditions.WithReason("SecretNotOwned"),
 			conditions.WithMessage(secretNotOwned.Error()))
+		// Terminal policy denial: do not polite-requeue; wait for the colliding Secret to be removed.
 		return odherrors.NewStopErrorW(secretNotOwned)
 	}
 	if missingExt, ok := errors.AsType[claimerrors.ExtensionNotAvailable](err); ok {
@@ -153,9 +154,10 @@ func (m *Controller) provisionAction(ctx context.Context, rr *odhtypes.Reconcili
 		return err
 	}
 
-	// Owns(Secret) is deferred (scoped cache); set the controller ownerRef so
-	// GC removes the Secret after the claim is deleted, and so AC checks that
-	// expect an owner reference to the claim succeed.
+	// The controller ownerRef routes Owns(Secret) drift events to this claim
+	// and lets GC collect the Secret after claim deletion. Foreign Secrets
+	// colliding on the name are rejected earlier in the provisioner, via
+	// RejectForeignCredentialsSecret.
 	if err := controllerutil.SetControllerReference(obj, secret, rr.Client.Scheme()); err != nil {
 		return fmt.Errorf("setting credentials Secret owner reference: %w", err)
 	}

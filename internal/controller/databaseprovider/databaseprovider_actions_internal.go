@@ -59,7 +59,7 @@ func (m *Controller) reconcileInternalAction(
 		}
 	}
 
-	tlsState, err := computeInternalAdminSecret(ctx, rr.Client, obj, m.cfg)
+	tlsState, err := computeInternalAdminSecret(ctx, m.APIReader, obj, m.cfg)
 	obj.Status.TLS = internalTLSStatus(obj, m.cfg, tlsState.Ready)
 	if err != nil {
 		return m.reportInternalAdminSecretFailure(rr, obj, tlsState, err)
@@ -212,7 +212,7 @@ func (m *Controller) internalReadinessAction(
 			conditions.WithMessage("Waiting for internal PostgreSQL StatefulSet to become ready"))
 		return nil
 	}
-	cfg, err := dbcontroller.LoadProviderConfig(ctx, rr.Client, obj, m.cfg.OperatorNamespace)
+	cfg, err := dbcontroller.LoadProviderConfig(ctx, m.APIReader, obj, m.cfg.OperatorNamespace)
 	if err != nil {
 		rr.Conditions.Mark(ConditionReachable, metav1.ConditionFalse,
 			conditions.WithReason(reasonAdminSecretUnavailable),

@@ -49,6 +49,13 @@ import (
 
 const internalStatefulSetKind = "StatefulSet"
 
+// withTestReader wires the request's fake client as the controller's API
+// reader, mirroring NewReconciler's production defaulting.
+func withTestReader(m *Controller, rr *odhtypes.ReconciliationRequest) *Controller {
+	m.APIReader = rr.Client
+	return m
+}
+
 func TestReconcileExternalActionReportsUnavailableSecret(t *testing.T) {
 	g := NewWithT(t)
 	provider := externalProvider()
@@ -56,7 +63,7 @@ func TestReconcileExternalActionReportsUnavailableSecret(t *testing.T) {
 	cli := testClient(t)
 	rr := testRequest(t, cli, provider)
 
-	err := (&Controller{}).reconcileExternalAction(context.Background(), rr)
+	err := withTestReader(&Controller{}, rr).reconcileExternalAction(context.Background(), rr)
 	g.Expect(err).NotTo(HaveOccurred())
 	g.Expect(provider.Status.ServerVersion).To(BeEmpty())
 	reachable := conditions.FindStatusCondition(provider, ConditionReachable)
@@ -79,7 +86,7 @@ func TestReconcileExternalActionReportsInvalidSecretWithoutReturningError(t *tes
 	cli := testClient(t, secret)
 	rr := testRequest(t, cli, provider)
 
-	g.Expect((&Controller{}).reconcileExternalAction(context.Background(), rr)).To(Succeed())
+	g.Expect(withTestReader(&Controller{}, rr).reconcileExternalAction(context.Background(), rr)).To(Succeed())
 	g.Expect(provider.Status.ServerVersion).To(BeEmpty())
 	reachable := conditions.FindStatusCondition(provider, ConditionReachable)
 	g.Expect(reachable).NotTo(BeNil())
@@ -136,7 +143,7 @@ func TestReconcileExternalActionFollowsChangedTLSProfileWithoutCertManager(t *te
 			g.Expect(cli.Update(context.Background(), apiServer)).To(Succeed())
 		}
 		rr := testRequest(t, cli, provider)
-		g.Expect(m.reconcileExternalAction(context.Background(), rr)).To(Succeed())
+		g.Expect(withTestReader(m, rr).reconcileExternalAction(context.Background(), rr)).To(Succeed())
 	}
 
 	g.Expect(minimumVersions).To(Equal([]uint16{tls.VersionTLS12, tls.VersionTLS12}))
@@ -182,7 +189,7 @@ func TestReconcileExternalActionReportsUnsupportedTLSProfileCiphers(t *testing.T
 	provider := externalProvider()
 	rr := testRequest(t, cli, provider)
 
-	g.Expect(m.reconcileExternalAction(context.Background(), rr)).To(Succeed())
+	g.Expect(withTestReader(m, rr).reconcileExternalAction(context.Background(), rr)).To(Succeed())
 	tlsCondition := conditions.FindStatusCondition(provider, ConditionTLSConfiguration)
 	g.Expect(tlsCondition).NotTo(BeNil())
 	g.Expect(tlsCondition.Status).To(Equal(metav1.ConditionTrue))
@@ -201,7 +208,7 @@ func TestReconcileExternalActionReportsUnreachableWithoutReturningError(t *testi
 	}}}
 	rr := testRequest(t, cli, provider)
 
-	g.Expect(m.reconcileExternalAction(context.Background(), rr)).To(Succeed())
+	g.Expect(withTestReader(m, rr).reconcileExternalAction(context.Background(), rr)).To(Succeed())
 	g.Expect(clientCalls).To(Equal(1))
 	g.Expect(provider.Status.ServerVersion).To(BeEmpty())
 	reachable := conditions.FindStatusCondition(provider, ConditionReachable)
@@ -224,7 +231,7 @@ func TestReconcileExternalActionRedactsPasswordFromConnectionFailure(t *testing.
 	}}}
 	rr := testRequest(t, cli, provider)
 
-	g.Expect(m.reconcileExternalAction(context.Background(), rr)).To(Succeed())
+	g.Expect(withTestReader(m, rr).reconcileExternalAction(context.Background(), rr)).To(Succeed())
 	reachable := conditions.FindStatusCondition(provider, ConditionReachable)
 	g.Expect(reachable).NotTo(BeNil())
 	g.Expect(reachable.Message).To(ContainSubstring("[redacted]"))
@@ -242,7 +249,7 @@ func TestReconcileExternalActionKeepsOutOfRangeServerUsable(t *testing.T) {
 	}}}
 	rr := testRequest(t, cli, provider)
 
-	g.Expect(m.reconcileExternalAction(context.Background(), rr)).To(Succeed())
+	g.Expect(withTestReader(m, rr).reconcileExternalAction(context.Background(), rr)).To(Succeed())
 	g.Expect(provider.Status.ServerVersion).To(Equal("18.0"))
 	reachable := conditions.FindStatusCondition(provider, ConditionReachable)
 	g.Expect(reachable.Status).To(Equal(metav1.ConditionTrue))
@@ -276,7 +283,7 @@ func TestReconcileInternalActionNetworkPolicyAllowsOperatorAndProvisionedClaimNa
 		PostgresImage:     moduleconfig.DefaultInternalPostgresImage,
 	}}}
 
-	g.Expect(m.reconcileInternalAction(context.Background(), rr)).To(Succeed())
+	g.Expect(withTestReader(m, rr).reconcileInternalAction(context.Background(), rr)).To(Succeed())
 	var policy *unstructured.Unstructured
 	for i := range rr.Resources {
 		if rr.Resources[i].GetKind() == "NetworkPolicy" {
@@ -316,7 +323,7 @@ func TestReconcileInternalActionDefaultsPostgresResources(t *testing.T) {
 			m := &Controller{Options: Options{cfg: &moduleconfig.Config{
 				PostgresImage: moduleconfig.DefaultInternalPostgresImage,
 			}}}
-			g.Expect(m.reconcileInternalAction(context.Background(), rr)).To(Succeed())
+			g.Expect(withTestReader(m, rr).reconcileInternalAction(context.Background(), rr)).To(Succeed())
 			var container *corev1.Container
 			for i := range rr.Resources {
 				if rr.Resources[i].GetKind() == internalStatefulSetKind {
@@ -357,7 +364,7 @@ func TestReconcileInternalActionUsesConfiguredPostgresImage(t *testing.T) {
 				PostgresImage: postgresImage,
 			}}}
 
-			g.Expect(m.reconcileInternalAction(context.Background(), rr)).To(Succeed())
+			g.Expect(withTestReader(m, rr).reconcileInternalAction(context.Background(), rr)).To(Succeed())
 
 			for i := range rr.Resources {
 				if rr.Resources[i].GetKind() != internalStatefulSetKind {
@@ -392,7 +399,7 @@ func TestInternalReadinessRequiresDesiredReplicaCount(t *testing.T) {
 			m := &Controller{Options: Options{cfg: &moduleconfig.Config{}, PostgresClientFactory: func(_ context.Context, _ postgres.Config) (postgres.Client, error) { return &fakePostgresClient{}, nil }}}
 			rr := testRequest(t, testClient(t, sts, secret), provider)
 			rr.Conditions.Mark(ConditionTLSConfiguration, metav1.ConditionTrue)
-			g.Expect(m.internalReadinessAction(context.Background(), rr)).To(Succeed())
+			g.Expect(withTestReader(m, rr).internalReadinessAction(context.Background(), rr)).To(Succeed())
 			reachable := conditions.FindStatusCondition(provider, ConditionReachable)
 			if tc.ready {
 				g.Expect(reachable.Status).To(Equal(metav1.ConditionTrue))
@@ -514,7 +521,7 @@ func TestInternalReadinessRejectsUnusableAdminSecret(t *testing.T) {
 	}}}
 	rr := testRequest(t, testClient(t, sts, secret), provider)
 	rr.Conditions.Mark(ConditionTLSConfiguration, metav1.ConditionTrue)
-	g.Expect(m.internalReadinessAction(context.Background(), rr)).To(Succeed())
+	g.Expect(withTestReader(m, rr).internalReadinessAction(context.Background(), rr)).To(Succeed())
 	reachable := conditions.FindStatusCondition(provider, ConditionReachable)
 	g.Expect(reachable.Status).To(Equal(metav1.ConditionFalse))
 	g.Expect(reachable.Reason).To(Equal("AdminConnectionFailed"))
@@ -528,7 +535,7 @@ func TestReconcileInternalActionDoesNotReplaceLostAdminCredentials(t *testing.T)
 	pvc := &corev1.PersistentVolumeClaim{ObjectMeta: metav1.ObjectMeta{Name: "internal", Namespace: "database-system"}}
 	rr := testRequest(t, testClient(t, pvc), provider)
 	m := &Controller{Options: Options{cfg: &moduleconfig.Config{}}}
-	err := m.reconcileInternalAction(context.Background(), rr)
+	err := withTestReader(m, rr).reconcileInternalAction(context.Background(), rr)
 	var stop odherrors.StopError
 	g.Expect(errors.As(err, &stop)).To(BeTrue())
 	g.Expect(stop.RequeueAfter()).To(Equal(moduleconfig.DefaultRetryInterval))
@@ -544,7 +551,7 @@ func TestReconcileInternalActionReportsMissingCertManager(t *testing.T) {
 	provider := &infraApi.DatabaseProvider{ObjectMeta: metav1.ObjectMeta{Name: "internal"}, Spec: infraApi.DatabaseProviderSpec{Type: infraApi.ProviderTypeInternal, Internal: &infraApi.InternalProviderSpec{Namespace: "database-system", TLS: &infraApi.InternalProviderTLSSpec{}}}}
 	rr := testRequest(t, testClient(t), provider)
 	m := &Controller{Options: Options{cfg: &moduleconfig.Config{}}}
-	g.Expect(m.reconcileInternalAction(context.Background(), rr)).To(Succeed())
+	g.Expect(withTestReader(m, rr).reconcileInternalAction(context.Background(), rr)).To(Succeed())
 	tlsCondition := conditions.FindStatusCondition(provider, ConditionTLSConfiguration)
 	g.Expect(tlsCondition).NotTo(BeNil())
 	g.Expect(tlsCondition.Status).To(Equal(metav1.ConditionFalse))

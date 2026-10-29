@@ -29,6 +29,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -196,6 +197,33 @@ func TestEnsure_RotatesPasswordWhenSecretPasswordEmpty(t *testing.T) {
 	g.Expect(pg.passwordSets).To(Equal(1))
 	g.Expect(string(secret.Data[postgres.SecretKeyPassword])).To(MatchRegexp(`^[A-Za-z0-9]+$`))
 	g.Expect(string(secret.Data[postgres.SecretKeyHost])).To(Equal(providerConfig().Host))
+}
+
+func TestEnsure_RejectsUnownedCredentialsSecret(t *testing.T) {
+	g := NewWithT(t)
+	claim := sampleClaim("analytics")
+	claim.UID = types.UID("claim-uid")
+	pg := &trackingClient{
+		cfg:       providerConfig(),
+		databases: map[string]bool{"analytics": true},
+	}
+	unowned := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: claim.Name, Namespace: claim.Namespace},
+		Data:       map[string][]byte{postgres.SecretKeyPassword: []byte("foreign-password")},
+	}
+	cli := fakeClient(t, unowned)
+
+	_, err := databaseclaim.DatabaseProvisioner{
+		Client:         cli,
+		Claim:          claim,
+		Provider:       internalProvider(),
+		Postgres:       pg,
+		ProviderConfig: providerConfig(),
+	}.Ensure(context.Background())
+
+	g.Expect(err).To(MatchError(claimerrors.SecretNotOwned{Secret: claim.Name}))
+	g.Expect(pg.createdRoles).To(BeEmpty(), "no role work before the foreign Secret is rejected")
+	g.Expect(pg.passwordSets).To(Equal(0), "the foreign Secret's password must never be reused")
 }
 
 func TestEnsure_CreatesNamedDatabaseOnExternalWhenAllowed(t *testing.T) {

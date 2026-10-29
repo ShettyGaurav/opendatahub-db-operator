@@ -111,6 +111,13 @@ func (p DatabaseProvisioner) Ensure(ctx context.Context) (*corev1.Secret, error)
 		return nil, dbcontroller.WrapQuickRetry("checking role existence", err)
 	}
 
+	// A foreign Secret colliding on this name (unowned, or controller-owned
+	// by another claim) must not be adopted: reject before any database or
+	// role work, and never reuse its stored password against the role.
+	if err := dbcontroller.RejectForeignCredentialsSecret(secret, p.Claim.UID); err != nil {
+		return nil, err
+	}
+
 	secretExists := secret.ResourceVersion != ""
 	access := p.Claim.Spec.Access
 	if access == "" {
