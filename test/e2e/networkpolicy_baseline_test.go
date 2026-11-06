@@ -43,7 +43,9 @@ import (
 const baselinePolicyName = "odh-db-operator-e2e-default-deny"
 
 // TestOperatorRunsUnderDefaultDenyBaseline verifies AC2 of RHOAIENG-96275 in
-// two phases.
+// two phases. It must run after TestHelmInstalledManagerDefaultProviderLifecycle
+// (file order): the infrastructure CRDs it creates providers against are
+// installed by the operator as operands once that test enables the module.
 //
 // Phase one (every cluster, every CI run): the chart ships the operator
 // NetworkPolicy with the expected shape -- the allowances that keep the

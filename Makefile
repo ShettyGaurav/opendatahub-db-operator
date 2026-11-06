@@ -198,16 +198,19 @@ test-e2e-setup: test-e2e-context-check helm-tool ## Install cert-manager when ne
 	@if [ "$(E2E_CERT_MANAGER_PROFILE)" != absent ]; then $(MAKE) test-e2e-cert-manager; fi
 	$(KUBECTL) get --raw=/readyz >/dev/null
 	$(MAKE) test-e2e-teardown
-	# Helm does not update CRDs; include module operand CRDs the standalone chart does not package.
-	$(KUBECTL) apply -f config/crd/bases/services.platform.opendatahub.io_databaseservices.yaml \
-		-f config/crd/bases/infrastructure.opendatahub.io_databaseproviders.yaml \
-		-f config/crd/bases/infrastructure.opendatahub.io_databaseclaims.yaml \
-		-f config/crd/bases/infrastructure.opendatahub.io_schemaclaims.yaml
+	# Operand CRDs persist after teardown (pruning lands with the operand
+	# finalizer); delete them so every run exercises the operator's
+	# fresh-install path instead of pre-existing CRDs.
+	$(KUBECTL) delete crd --ignore-not-found --wait --timeout=120s \
+		databaseproviders.infrastructure.opendatahub.io \
+		databaseclaims.infrastructure.opendatahub.io \
+		schemaclaims.infrastructure.opendatahub.io
+	# Only the module's own API is pre-installed; the operator applies the
+	# infrastructure CRDs as operands once the singleton exists. Helm does
+	# not upgrade CRDs, so the pre-apply keeps reused clusters current.
+	$(KUBECTL) apply -f config/crd/bases/services.platform.opendatahub.io_databaseservices.yaml
 	$(KUBECTL) wait --for=condition=Established --timeout=60s \
-		crd/databaseservices.services.platform.opendatahub.io \
-		crd/databaseproviders.infrastructure.opendatahub.io \
-		crd/databaseclaims.infrastructure.opendatahub.io \
-		crd/schemaclaims.infrastructure.opendatahub.io
+		crd/databaseservices.services.platform.opendatahub.io
 	$(MAKE) container-build IMG="$(IMG)"
 	$(MAKE) container-load-kind IMG="$(IMG)" KIND_CLUSTER="$(KIND_CLUSTER)"
 # The bootstrap webhook certificate needs cert-manager; provider/claim tests do not.
@@ -265,11 +268,17 @@ test-e2e-run: test-e2e-context-check ## Verify the Helm-deployed manager reconci
 	ODH_E2E_EXTERNAL_ADMIN_SECRET_NAMESPACE="$(E2E_EXTERNAL_ADMIN_SECRET_NAMESPACE)" \
 	ODH_E2E_EXTERNAL_ADMIN_SECRET_NAME="$(E2E_EXTERNAL_ADMIN_SECRET_NAME)" \
 	ODH_E2E_CONSUMER_IMAGE="$(E2E_CONSUMER_IMAGE)" \
-		go test ./test/e2e/... -v -timeout 20m
+		go test ./test/e2e/... -v -count=1 -timeout 20m
 
 .PHONY: test-e2e-teardown
-test-e2e-teardown: test-e2e-context-check helm-tool ## Remove the e2e DatabaseService, Helm release, and namespace.
+test-e2e-teardown: test-e2e-context-check helm-tool ## Remove e2e claims, DatabaseService, Helm release, and namespace; claims go first because their finalizers are reconciled by the still-running operator, and orphaned Terminating claims would block namespace and CRD deletion on the next run.
 	@cleanup_status=0; \
+	if $(KUBECTL) get crd schemaclaims.infrastructure.opendatahub.io >/dev/null 2>&1; then \
+		$(KUBECTL) delete schemaclaims.infrastructure.opendatahub.io --all --all-namespaces --ignore-not-found --wait --timeout=120s || cleanup_status=$$?; \
+	fi; \
+	if $(KUBECTL) get crd databaseclaims.infrastructure.opendatahub.io >/dev/null 2>&1; then \
+		$(KUBECTL) delete databaseclaims.infrastructure.opendatahub.io --all --all-namespaces --ignore-not-found --wait --timeout=120s || cleanup_status=$$?; \
+	fi; \
 	if $(KUBECTL) get crd databaseservices.services.platform.opendatahub.io >/dev/null 2>&1; then \
 		$(KUBECTL) delete databaseservice default-db-operator --ignore-not-found --wait || cleanup_status=$$?; \
 	fi; \
