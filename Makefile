@@ -194,7 +194,15 @@ test-integration-run: ## Run integration tests against the current kubeconfig co
 test-integration: test-integration-setup test-integration-run ## Set up and run integration tests.
 
 .PHONY: test-e2e-setup
-test-e2e-setup: test-e2e-context-check helm-tool ## Install cert-manager when needed, build/load the manager image, and install the Helm chart into Kind.
+test-e2e-setup: test-e2e-context-check helm-tool ## Install cert-manager when needed, build/load the manager image, and install the Helm chart into Kind. Requires E2E_ALLOW_CRD_DELETE=1: the target cluster must be exclusive and disposable, because setup deletes operand resources cluster-wide.
+	@if [ "$(E2E_ALLOW_CRD_DELETE)" != "1" ]; then \
+		echo "test-e2e-setup tears down the previous e2e release and deletes the operand CRDs" >&2; \
+		echo "cluster-wide, cascade-deleting every DatabaseProvider, DatabaseClaim, and" >&2; \
+		echo "SchemaClaim with their data. Set E2E_ALLOW_CRD_DELETE=1 to acknowledge the" >&2; \
+		echo "target cluster is exclusive and disposable; see CONTRIBUTING's" >&2; \
+		echo "test-environments section." >&2; \
+		exit 1; \
+	fi
 	@if [ "$(E2E_CERT_MANAGER_PROFILE)" != absent ]; then $(MAKE) test-e2e-cert-manager; fi
 	$(KUBECTL) get --raw=/readyz >/dev/null
 	$(MAKE) test-e2e-teardown
@@ -274,7 +282,13 @@ test-e2e-run: test-e2e-context-check ## Verify the Helm-deployed manager reconci
 		go test ./test/e2e/... -v -count=1 -timeout 20m
 
 .PHONY: test-e2e-teardown
-test-e2e-teardown: test-e2e-context-check helm-tool ## Remove e2e claims, DatabaseService, Helm release, and namespace; claims go first because their finalizers are reconciled by the still-running operator, and orphaned Terminating claims would block namespace and CRD deletion on the next run.
+test-e2e-teardown: test-e2e-context-check helm-tool ## Remove e2e claims, DatabaseService, Helm release, and namespace; claims go first because their finalizers are reconciled by the still-running operator, and orphaned Terminating claims would block namespace and CRD deletion on the next run. Requires E2E_ALLOW_CRD_DELETE=1: teardown deletes claims cluster-wide.
+	@if [ "$(E2E_ALLOW_CRD_DELETE)" != "1" ]; then \
+		echo "test-e2e-teardown deletes claims cluster-wide and the e2e release and" >&2; \
+		echo "namespace. Set E2E_ALLOW_CRD_DELETE=1 to acknowledge the target cluster" >&2; \
+		echo "is exclusive and disposable; see CONTRIBUTING's test-environments section." >&2; \
+		exit 1; \
+	fi
 	@cleanup_status=0; \
 	if $(KUBECTL) get crd schemaclaims.infrastructure.opendatahub.io >/dev/null 2>&1; then \
 		$(KUBECTL) delete schemaclaims.infrastructure.opendatahub.io --all --all-namespaces --ignore-not-found --wait --timeout=120s || cleanup_status=$$?; \

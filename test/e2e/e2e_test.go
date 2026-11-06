@@ -155,7 +155,27 @@ func TestHelmInstalledManagerDefaultProviderLifecycle(t *testing.T) {
 
 	// Only the DatabaseService CRD is pre-installed by the e2e setup; the
 	// infrastructure CRDs must be absent until the operator applies them as
-	// module operands once the singleton exists.
+	// module operands once the singleton exists. Under shuffled ordering
+	// another test may have enabled the module first; the absence assertions
+	// then only run when this test is the one enabling it.
+	freshInstall := true
+	for _, name := range []string{
+		infraapi.DatabaseProviderCRDName,
+		infraapi.DatabaseClaimCRDName,
+		infraapi.SchemaClaimCRDName,
+	} {
+		err := kubeClient.Get(ctx, client.ObjectKey{Name: name}, &apiextensionsv1.CustomResourceDefinition{})
+		if err == nil {
+			freshInstall = false
+			continue
+		}
+		g.Expect(apierrors.IsNotFound(err)).To(BeTrue(),
+			"getting infrastructure CRD %s: %v; run `make test-e2e-setup`", name, err)
+	}
+	if freshInstall {
+		t.Log("operand CRDs absent before enabling: asserting the operator's fresh-install path")
+	}
+
 	podList := &corev1.PodList{}
 	g.Expect(kubeClient.List(ctx, podList,
 		client.InNamespace(namespace),
@@ -171,15 +191,6 @@ func TestHelmInstalledManagerDefaultProviderLifecycle(t *testing.T) {
 		return -1
 	}
 	restartsBefore := managerRestarts(managerPodBefore)
-	for _, name := range []string{
-		infraapi.DatabaseProviderCRDName,
-		infraapi.DatabaseClaimCRDName,
-		infraapi.SchemaClaimCRDName,
-	} {
-		err := kubeClient.Get(ctx, client.ObjectKey{Name: name}, &apiextensionsv1.CustomResourceDefinition{})
-		g.Expect(apierrors.IsNotFound(err)).To(BeTrue(),
-			"infrastructure CRD %s must be absent before the module is enabled; run `make test-e2e-setup`", name)
-	}
 
 	instance := &servicesv1alpha1.DatabaseService{
 		ObjectMeta: metav1.ObjectMeta{Name: servicesv1alpha1.DatabaseServiceInstanceName},

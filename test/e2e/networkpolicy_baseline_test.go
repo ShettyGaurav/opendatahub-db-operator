@@ -25,7 +25,6 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/conditions"
 	networkingv1 "k8s.io/api/networking/v1"
-	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -44,9 +43,10 @@ import (
 const baselinePolicyName = "odh-db-operator-e2e-default-deny"
 
 // TestOperatorRunsUnderDefaultDenyBaseline verifies AC2 of RHOAIENG-96275 in
-// two phases. It must run after TestHelmInstalledManagerDefaultProviderLifecycle
-// (file order): the infrastructure CRDs it creates providers against are
-// installed by the operator as operands once that test enables the module.
+// two phases. It is order-independent: it normally follows
+// TestHelmInstalledManagerDefaultProviderLifecycle (file order), but when
+// invoked alone or shuffled first it enables the module itself after the
+// CNI gate so the operand CRDs its providers depend on exist.
 //
 // Phase one (every cluster, every CI run): the chart ships the operator
 // NetworkPolicy with the expected shape -- the allowances that keep the
@@ -99,20 +99,10 @@ func TestOperatorRunsUnderDefaultDenyBaseline(t *testing.T) {
 	}
 
 	// The baseline scenario runs with the module enabled: the operand CRDs
-	// its providers depend on are installed by the operator when the
-	// lifecycle test creates the singleton. Fail fast with a diagnosable
-	// message instead of a no-match error when this test is invoked alone.
-	for _, name := range []string{
-		infraapi.DatabaseProviderCRDName,
-		infraapi.DatabaseClaimCRDName,
-		infraapi.SchemaClaimCRDName,
-	} {
-		if err := cli.Get(ctx, client.ObjectKey{Name: name}, &apiextensionsv1.CustomResourceDefinition{}); err != nil {
-			t.Fatalf("operand CRD %s is absent: the module is not enabled; run "+
-				"TestHelmInstalledManagerDefaultProviderLifecycle first -- it creates the "+
-				"singleton that makes the operator install the operand CRDs", name)
-		}
-	}
+	// its providers depend on are installed by the operator once the
+	// singleton exists. When invoked alone or shuffled first, enable the
+	// module here so this test stays independent of ordering.
+	ensureOperandCRDs(t, ctx, cli)
 
 	// Apply the default-deny baseline: deny all ingress and egress for every
 	// pod in the operator namespace, mirroring what the ODH platform operator
