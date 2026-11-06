@@ -25,6 +25,7 @@ import (
 	. "github.com/onsi/gomega"
 	"github.com/opendatahub-io/odh-platform-utilities/framework/controller/conditions"
 	networkingv1 "k8s.io/api/networking/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -95,6 +96,22 @@ func TestOperatorRunsUnderDefaultDenyBaseline(t *testing.T) {
 			"e.g. kind's default kindnet) -- the default-deny baseline scenario would pass " +
 			"vacuously here. Run on a cluster with an enforcing CNI (OpenShift/OVN-K, " +
 			"Calico, Cilium); see CONTRIBUTING's test-environments section")
+	}
+
+	// The baseline scenario runs with the module enabled: the operand CRDs
+	// its providers depend on are installed by the operator when the
+	// lifecycle test creates the singleton. Fail fast with a diagnosable
+	// message instead of a no-match error when this test is invoked alone.
+	for _, name := range []string{
+		infraapi.DatabaseProviderCRDName,
+		infraapi.DatabaseClaimCRDName,
+		infraapi.SchemaClaimCRDName,
+	} {
+		if err := cli.Get(ctx, client.ObjectKey{Name: name}, &apiextensionsv1.CustomResourceDefinition{}); err != nil {
+			t.Fatalf("operand CRD %s is absent: the module is not enabled; run "+
+				"TestHelmInstalledManagerDefaultProviderLifecycle first -- it creates the "+
+				"singleton that makes the operator install the operand CRDs", name)
+		}
 	}
 
 	// Apply the default-deny baseline: deny all ingress and egress for every

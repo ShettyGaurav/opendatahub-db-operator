@@ -47,8 +47,12 @@ operator -- the `make test-e2e-providers` target is bound to a
 ```sh
 ODH_E2E_NAMESPACE=<operator-namespace> \
 ODH_E2E_CONSUMER_IMAGE=<bash-and-psql image, e.g. postgres:16> \
-go test ./test/e2e/ -run TestOperatorRunsUnderDefaultDenyBaseline -v -timeout 25m
+go test ./test/e2e/ -run 'TestHelmInstalledManagerDefaultProviderLifecycle|TestOperatorRunsUnderDefaultDenyBaseline' -v -timeout 25m
 ```
+
+The lifecycle test must run first: it creates the singleton that makes the
+operator install the operand CRDs the baseline scenario's providers depend on;
+invoking the baseline test alone fails fast with a message saying so.
 
 The E2E workflow's `Default-deny baseline (Calico)` job runs this scenario
 continuously on every pull request, on a Kind cluster whose default CNI is

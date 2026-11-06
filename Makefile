@@ -200,7 +200,10 @@ test-e2e-setup: test-e2e-context-check helm-tool ## Install cert-manager when ne
 	$(MAKE) test-e2e-teardown
 	# Operand CRDs persist after teardown (pruning lands with the operand
 	# finalizer); delete them so every run exercises the operator's
-	# fresh-install path instead of pre-existing CRDs.
+	# fresh-install path instead of pre-existing CRDs. The deletion is
+	# cluster-wide: it cascade-deletes every DatabaseProvider, DatabaseClaim,
+	# and SchemaClaim on the cluster, so this target requires an exclusive
+	# e2e cluster (see CONTRIBUTING's test-environments section).
 	$(KUBECTL) delete crd --ignore-not-found --wait --timeout=120s \
 		databaseproviders.infrastructure.opendatahub.io \
 		databaseclaims.infrastructure.opendatahub.io \
