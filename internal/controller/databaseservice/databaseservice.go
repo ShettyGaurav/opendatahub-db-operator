@@ -69,10 +69,12 @@ func NewModule(cfg *moduleconfig.Config) *Module {
 
 // The reconciler installs the infrastructure CRDs as module operands via
 // server-side apply. Applying a CRD that does not exist yet authorizes as
-// create (verified against a live API server); re-applying an existing one
-// authorizes as patch. The delete verb arrives with the operand pruning
-// finalizer.
-// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create;patch
+// create (verified against a live API server; RBAC cannot scope create by
+// resource name), while re-applying an existing one authorizes as patch and
+// is scoped to the three operand CRD names. The delete verb arrives with
+// the operand pruning finalizer.
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,verbs=get;list;watch;create
+// +kubebuilder:rbac:groups=apiextensions.k8s.io,resources=customresourcedefinitions,resourceNames=databaseproviders.infrastructure.opendatahub.io;databaseclaims.infrastructure.opendatahub.io;schemaclaims.infrastructure.opendatahub.io,verbs=patch
 // +kubebuilder:rbac:groups=authentication.k8s.io,resources=tokenreviews,verbs=create
 // +kubebuilder:rbac:groups=authorization.k8s.io,resources=subjectaccessreviews,verbs=create
 // +kubebuilder:rbac:urls=/metrics,verbs=get
